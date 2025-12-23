@@ -1,1 +1,5 @@
 教材.md
+*.aux
+*.log
+*.synctex.gz
+*.toc
