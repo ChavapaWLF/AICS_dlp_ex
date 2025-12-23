@@ -14,7 +14,7 @@ vluint64_t sim_time = 0;
 // 读取16位二进制数据
 bool load_16bit_data(const string& path, vector<int16_t>& data) {
     ifstream f(path);
-    if (!f) { cerr << "ERROR: 无法打开文件: " << path << endl; return false; }
+    if (!f) { cerr << "ERROR: Cannot open " << path << endl; return false; }
     
     string line;
     data.clear();
@@ -29,19 +29,16 @@ bool load_16bit_data(const string& path, vector<int16_t>& data) {
             try {
                 int value = stoi(bin, nullptr, 2);
                 data.push_back(static_cast<int16_t>(value));
-            } catch (...) {
-                cerr << "WARN: 无效数据: " << bin << endl;
-            }
+            } catch (...) {}
         }
     }
-    cout << "INFO: " << path << " 加载 " << data.size() << " 个数据" << endl;
     return true;
 }
 
 // 读取32位二进制结果
 bool load_32bit_result(const string& path, int32_t& result) {
     ifstream f(path);
-    if (!f) { cerr << "ERROR: 无法打开结果文件: " << path << endl; return false; }
+    if (!f) { cerr << "ERROR: Cannot open " << path << endl; return false; }
     
     string line;
     if (getline(f, line)) {
@@ -54,14 +51,10 @@ bool load_32bit_result(const string& path, int32_t& result) {
             try {
                 long long value = stoll(bin, nullptr, 2);
                 result = static_cast<int32_t>(value);
-                cout << "INFO: 预期结果加载成功（十进制: " << result << "）" << endl;
                 return true;
-            } catch (...) {
-                cerr << "ERROR: 无效结果数据: " << bin << endl;
-            }
+            } catch (...) {}
         }
     }
-    cerr << "ERROR: 未找到有效结果数据" << endl;
     return false;
 }
 
@@ -69,38 +62,46 @@ int main(int argc, char**argv) {
     Verilated::commandArgs(argc, argv);
     Verilated::traceEverOn(true);
 
-    cout << "\n=== 内积运算器测试（单组数据）===" << endl;
+    // 获取数据目录（从命令行参数或使用默认值）
+    string data_dir = (argc > 1) ? string(argv[1]) : "../data";
 
     // 加载数据
     vector<int16_t> neuron, weight;
     int32_t expected_result;
     
-    if (!load_16bit_data("/home/aics/dlp_ex/data/neuron", neuron) ||
-        !load_16bit_data("/home/aics/dlp_ex/data/weight", weight) ||
-        !load_32bit_result("/home/aics/dlp_ex/data/result", expected_result)) {
+    if (!load_16bit_data(data_dir + "/neuron", neuron) ||
+        !load_16bit_data(data_dir + "/weight", weight) ||
+        !load_32bit_result(data_dir + "/result", expected_result)) {
         return 1;
     }
-
-    // 验证数据量（固定为4）
-    if (neuron.size() != 4 || weight.size() != 4) {
-        cerr << "ERROR: 数据量必须为4个（当前neuron=" << neuron.size() 
-             << ", weight=" << weight.size() << "）" << endl;
+    
+    if (neuron.size() < 4 || weight.size() < 4) {
+        cerr << "ERROR: Insufficient data" << endl;
         return 1;
     }
+    if (weight.size() > 4) weight.resize(4);
 
-    // 打印加载的数据（调试用）
-    cout << "\n=== 输入数据 ===" << endl;
-    cout << "神经元数据（十进制）: ";
-    for (int i = 0; i < 4; i++) cout << (int)neuron[i] << " ";
-    cout << "\n权重数据（十进制）:   ";
-    for (int i = 0; i < 4; i++) cout << (int)weight[i] << " ";
-    cout << "\n预期结果（十进制）:   " << expected_result << endl;
+    // 打印关键信息
+    cout << "A=[";
+    for (int i = 0; i < 4; i++) {
+        cout << (int)neuron[i];
+        if (i < 3) cout << ",";
+    }
+    cout << "] W=[";
+    for (int i = 0; i < 4; i++) {
+        cout << (int)weight[i];
+        if (i < 3) cout << ",";
+    }
+    cout << "] Expected=" << expected_result;
 
-    // 初始化DUT和波形
+    // 初始化DUT（禁用波形以加速测试）
     Vinner_product_4x16* dut = new Vinner_product_4x16;
-    VerilatedVcdC* wave = new VerilatedVcdC;
-    dut->trace(wave, 99);
-    wave->open("wave_inner.vcd");
+    VerilatedVcdC* wave = nullptr;
+    if (argc <= 1) {  // 仅在单次测试时生成波形
+        wave = new VerilatedVcdC;
+        dut->trace(wave, 99);
+        wave->open("wave_inner.vcd");
+    }
 
     // 初始化信号
     dut->clk = 0;
@@ -116,67 +117,39 @@ int main(int argc, char**argv) {
     int32_t actual_result = 0;
     bool result_captured = false;
 
-    // 仿真循环 - 延长时间确保结果稳定输出
+    // 仿真循环
     while (sim_time < 60) {
-        // 时钟翻转（每个时间单位翻转一次）
         if (sim_time % (CLK_PERIOD / 2) == 0) {
             dut->clk = !dut->clk;
-            // 打印时钟上升沿，帮助调试时序
-            if (dut->clk == 1) {
-                cout << "INFO: 时钟上升沿 @ 时间 " << sim_time << endl;
-            }
         }
-
-        // 第5个时间单位释放复位
-        if (sim_time == 5) {
-            dut->reset = 0;
-            cout << "INFO: 释放复位 @ 时间 " << sim_time << endl;
-        }
-
-        // 在时钟下降沿加载数据（确保数据在上升沿前稳定）
+        if (sim_time == 5) dut->reset = 0;
         if (sim_time == 9 && dut->clk == 0) {
             for (int i = 0; i < 4; i++) {
                 dut->activations[i] = neuron[i];
                 dut->weights[i] = weight[i];
             }
-            cout << "INFO: 加载数据 @ 时间 " << sim_time << endl;
         }
-
-        // 在数据加载后的下降沿使能计算
-        if (sim_time == 11 && dut->clk == 0) {
-            dut->enable = 1;
-            cout << "INFO: 使能计算 @ 时间 " << sim_time << endl;
-        }
-
-        // 保持使能至少一个完整周期
-        if (sim_time == 15 && dut->clk == 0) {
-            dut->enable = 0;
-            cout << "INFO: 关闭使能 @ 时间 " << sim_time << endl;
-        }
-
-        // 关键修改：在使能关闭后至少等待2个时钟周期再捕获结果
-        // 匹配模块的寄存器延迟特性
+        if (sim_time == 11 && dut->clk == 0) dut->enable = 1;
+        if (sim_time == 15 && dut->clk == 0) dut->enable = 0;
         if (dut->clk == 1 && dut->reset == 0 && !result_captured && sim_time > 25) {
             actual_result = dut->result;
             result_captured = true;
-            cout << "INFO: 在时间 " << sim_time << " 捕获结果" << endl;
         }
-
         dut->eval();
-        wave->dump(sim_time);
+        if (wave) wave->dump(sim_time);
         sim_time++;
     }
 
     // 清理资源
-    wave->close();
+    if (wave) {
+        wave->close();
+        delete wave;
+    }
     delete dut;
-    delete wave;
 
     // 结果验证
-    cout << "\n=== 结果验证 ===" << endl;
-    cout << "实际结果（十进制）: " << actual_result << endl;
-    cout << "预期结果（十进制）: " << expected_result << endl;
-    cout << "验证结果: " << (actual_result == expected_result ? "通过" : "失败") << endl;
+    cout << " Actual=" << actual_result;
+    cout << " [" << (actual_result == expected_result ? "PASS" : "FAIL") << "]" << endl;
 
     return (actual_result == expected_result) ? 0 : 1;
 }

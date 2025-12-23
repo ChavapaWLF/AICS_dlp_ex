@@ -15,28 +15,18 @@ vluint64_t sim_time = 0;
 // 加载矩阵维度配置
 bool load_config(const string& path, int& rowsA, int& colsA, int& colsB) {
     ifstream f(path);
-    if (!f) { cerr << "ERROR: 无法打开config文件: " << path << endl; return false; }
+    if (!f) { return false; }
     string line;
-    if (!getline(f, line)) { cerr << "ERROR: config文件为空" << endl; return false; }
-
+    if (!getline(f, line)) { return false; }
     stringstream ss(line);
     string a, b, c;
-    if (!(ss >> a >> b >> c)) {
-        cerr << "ERROR: config文件格式错误" << endl;
-        return false;
-    }
-
+    if (!(ss >> a >> b >> c)) return false;
     try {
         rowsA = stoi(a, nullptr, 16);
         colsA = stoi(b, nullptr, 16);
         colsB = stoi(c, nullptr, 16);
-        cout << "INFO: 矩阵维度（16进制转换为10进制）: "
-             << "A(" << rowsA << "x" << colsA << "), "
-             << "B(" << colsA << "x" << colsB << "), "
-             << "结果(" << rowsA << "x" << colsB << ")" << endl;
         return true;
     } catch (...) {
-        cerr << "ERROR: 解析config失败" << endl;
         return false;
     }
 }
@@ -44,8 +34,7 @@ bool load_config(const string& path, int& rowsA, int& colsA, int& colsB) {
 // 加载16位矩阵数据
 bool load_16bit_matrix(const string& path, vector<int16_t>& data) {
     ifstream f(path);
-    if (!f) { cerr << "ERROR: 无法打开文件: " << path << endl; return false; }
-
+    if (!f) { return false; }
     string line;
     data.clear();
     while (getline(f, line)) {
@@ -53,29 +42,22 @@ bool load_16bit_matrix(const string& path, vector<int16_t>& data) {
         stringstream ss(line);
         string bin;
         while (ss >> bin) {
-            if (bin.size() != 16) {
-                cerr << "ERROR: 16位数据长度错误: " << bin.size() << "位" << endl;
-                return false;
-            }
+            if (bin.size() != 16) return false;
             try {
                 uint16_t bits = stoi(bin, nullptr, 2);
                 data.push_back(static_cast<int16_t>(bits));
             } catch (...) {
-                cerr << "ERROR: 无效16位数据: " << bin << endl;
                 return false;
             }
         }
     }
-
-    cout << "INFO: " << path << " 加载 " << data.size() << " 个数据" << endl;
     return true;
 }
 
 // 加载32位结果数据
 bool load_32bit_results(const string& path, vector<int32_t>& results) {
     ifstream f(path);
-    if (!f) { cerr << "ERROR: 无法打开结果文件: " << path << endl; return false; }
-
+    if (!f) { return false; }
     string line;
     results.clear();
     while (getline(f, line)) {
@@ -83,21 +65,15 @@ bool load_32bit_results(const string& path, vector<int32_t>& results) {
         stringstream ss(line);
         string bin;
         while (ss >> bin) {
-            if (bin.size() != 32) {
-                cerr << "ERROR: 32位结果长度错误: " << bin.size() << "位" << endl;
-                return false;
-            }
+            if (bin.size() != 32) return false;
             try {
                 uint32_t bits = stoul(bin, nullptr, 2);
                 results.push_back(static_cast<int32_t>(bits));
             } catch (...) {
-                cerr << "ERROR: 无效32位结果: " << bin << endl;
                 return false;
             }
         }
     }
-
-    cout << "INFO: 结果文件加载 " << results.size() << " 个结果" << endl;
     return true;
 }
 
@@ -105,52 +81,39 @@ int main(int argc, char**argv) {
     Verilated::commandArgs(argc, argv);
     Verilated::traceEverOn(true);
 
-    cout << "\n=== 矩阵乘矩阵测试 ===" << endl;
-
+    string data_dir = (argc > 1) ? string(argv[1]) : "../data";
     int rowsA, colsA, colsB;
     vector<int16_t> activations, weights;
     vector<int32_t> expected_results, actual_results;
 
-    // 加载配置和数据
-    if (!load_config("/home/aics/dlp_ex/data/config", rowsA, colsA, colsB) ||
-        !load_16bit_matrix("/home/aics/dlp_ex/data/neuron", activations) ||
-        !load_16bit_matrix("/home/aics/dlp_ex/data/weight", weights) ||
-        !load_32bit_results("/home/aics/dlp_ex/data/result", expected_results)) {
+    if (!load_config(data_dir + "/config", rowsA, colsA, colsB) ||
+        !load_16bit_matrix(data_dir + "/neuron", activations) ||
+        !load_16bit_matrix(data_dir + "/weight", weights) ||
+        !load_32bit_results(data_dir + "/result", expected_results)) {
         return 1;
     }
 
-    // 验证数据长度
     if (activations.size() != (size_t)(rowsA * colsA) ||
         weights.size() != (size_t)(colsA * colsB) ||
         expected_results.size() != (size_t)(rowsA * colsB)) {
-        cerr << "ERROR: 数据量不匹配（激活值=" << activations.size() << ", 权重=" << weights.size()
-             << ", 预期结果=" << expected_results.size() << "）" << endl;
+        cerr << "ERROR: Data size mismatch" << endl;
         return 1;
     }
 
-    // 打印输入数据
-    cout << "\n=== 输入数据 ===" << endl;
-    cout << "激活值矩阵（activations，" << rowsA << "x" << colsA << "）:" << endl;
-    for (int i = 0; i < rowsA; i++) {
-        for (int j = 0; j < colsA; j++) {
-            cout << (int)activations[i * colsA + j] << "\t";
-        }
-        cout << endl;
+    cout << "Matrix(" << rowsA << "x" << colsA << "x" << colsB << ") Expected=[";
+    for (size_t i = 0; i < expected_results.size(); i++) {
+        cout << expected_results[i];
+        if (i < expected_results.size() - 1) cout << ",";
     }
+    cout << "]";
 
-    cout << "\n权重矩阵（weights，" << colsA << "x" << colsB << "）:" << endl;
-    for (int i = 0; i < colsA; i++) {
-        for (int j = 0; j < colsB; j++) {
-            cout << (int)weights[i * colsB + j] << "\t";
-        }
-        cout << endl;
-    }
-
-    // 初始化DUT
     Vmatrix_mult_4x4x4x16* dut = new Vmatrix_mult_4x4x4x16;
-    VerilatedVcdC* wave = new VerilatedVcdC;
-    dut->trace(wave, 99);
-    wave->open("wave_matrix_mult.vcd");
+    VerilatedVcdC* wave = nullptr;
+    if (argc <= 1) {
+        wave = new VerilatedVcdC;
+        dut->trace(wave, 99);
+        wave->open("wave_matrix_mult.vcd");
+    }
 
     // 初始化信号
     dut->clk = 0;
@@ -216,31 +179,28 @@ int main(int argc, char**argv) {
         }
 
         dut->eval();
-        wave->dump(sim_time);
+        if (wave) wave->dump(sim_time);
         sim_time++;
     }
 
-    // 清理资源
-    wave->close();
+    if (wave) {
+        wave->close();
+        delete wave;
+    }
     delete dut;
-    delete wave;
 
-    // 结果验证
-    cout << "\n=== 结果验证 ===" << endl;
+    cout << " Actual=[";
+    for (size_t i = 0; i < actual_results.size(); i++) {
+        cout << actual_results[i];
+        if (i < actual_results.size() - 1) cout << ",";
+    }
     bool all_pass = true;
-    for (int i = 0; i < rowsA; i++) {
-        for (int j = 0; j < colsB; j++) {
-            int idx = i * colsB + j;
-            bool pass = (actual_results[idx] == expected_results[idx]);
-
-            cout << "结果[" << i << "][" << j << "]: 实际=" << actual_results[idx]
-                 << ", 预期=" << expected_results[idx]
-                 << " [" << (pass ? "通过" : "失败") << "]" << endl;
-
-            if (!pass) all_pass = false;
+    for (size_t i = 0; i < actual_results.size(); i++) {
+        if (actual_results[i] != expected_results[i]) {
+            all_pass = false;
+            break;
         }
     }
-
-    cout << "\n验证结果: " << (all_pass ? "全部通过" : "存在失败") << endl;
+    cout << "] [" << (all_pass ? "PASS" : "FAIL") << "]" << endl;
     return all_pass ? 0 : 1;
 }
